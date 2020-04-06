@@ -1,47 +1,76 @@
 
 
 
+
+
+
+## Posterior Predictive Checks
+
+
 library(bayesplot)
 
 
-## Cut dataset.
-y.1 = wk_full_ts[1:150] # Used to train models
-y.2 = wk_full_ts[151:209] # Used to compare models
+# ## Cut dataset.
+# y.1 = wk_full_ts[1:150] # Used to train models
+# y.2 = wk_full_ts[151:209] # Used to compare models
 
 
-## AddSemilocalLinearTrend
-ss4 <- AddSemilocalLinearTrend(list(), y.1)
-model4_pre <- bsts(y.1,
-                   state.specification = ss4, niter = 500)
 
-## AddSemilocalLinearTrend
-ss5 <- AddSemilocalLinearTrend(list(), y.1)
-ss5 <- AddSeasonal(ss5, y.1, nseasons = 52)
-model5_pre <- bsts(y.1,
-                   state.specification = ss5, niter = 500)
+## Posterior Predictive Checks on Holdout
+## ==============================================
 
-
-pred4 <- predict(model4_pre, horizon = dim(as.matrix(y.2))[1], burn = 100, quantiles = c(0.15, 0.85))
+### Not ono-step ahead
+pred4 <- predict(model4_pre, horizon = dim(as.matrix(y.2))[1], burn = SuggestBurn(.1, model4_pre), quantiles = c(0.15, 0.85))
 pred_dist4 = pred4$distribution
 ppc_dens_overlay(y.2, pred_dist4)
 
-pred5 <- predict(model5_pre, horizon = dim(as.matrix(y.2))[1], burn = 1)
+pred5 <- predict(model5_pre, horizon = dim(as.matrix(y.2))[1], burn = SuggestBurn(.1, model5_pre))
 pred_dist5 = pred5$distribution
-ppc_dens_overlay(y.2, pred_dist5)
+ppc_dens_overlay(y.2, pred_dist5[50:70,])
 
 ## Some In-Package Plots
-plot(pred4, xlim(150,200))
+par(mfrow=c(1,1))
+
+plot(pred4)
 lines(as.numeric(c(y.1,y.2), lty = 2, lwd = 2), col = "firebrick2")
 
 plot(pred5, ylim = c(2.5, 4.5)) # 
 lines(as.numeric(c(y.1,y.2)), col = "firebrick2")
 
+# One Option for Zooming In
+plot(pred5, plot.original = 10)
+lines(y.2, col = "firebrick2")
+
+# Another Option for Zooming in
 PlotDynamicDistribution(pred_dist5, quantile.step = 0.001, ylim = c(2.5, 4.5))
 lines(y.2, col = "firebrick2")
 
 
+### Testing Theories about the posterior predictive probability
+# 1. Come up with a test statistic T that has power to diagnose
+# violations of whatever assumption you are testing.
+# 2. Calculate T for the observed data y: T(y)
+# 3. Calculate T for each y
+# rep draw from the posterior predictive
+# distribution: T(y
+#                 rep|y)
+# 4. Calculate the fraction of times T(y
+#                                      rep|y) > T(y). This is an
+# estimate of the posterior predictive p-value.
+
+
+
+
+### Same Thing, but we'll do one-step ahead errors on the holdout.
+bsts.holdout.prediction.errors(model5_pre, y.2, burn = 1)
+
+
+
+
+
 
 ## Residual Plots
+## ==============================================
 par(mfrow = c(2,2))
 
 r5 <- residuals(model5_pre)
@@ -85,3 +114,7 @@ ppc_dens_overlay(y, ppd5)
 # Model 4
 ppd4 = get_pp(model4, wk_full_ts)
 ppc_dens_overlay(y, ppd4)
+
+
+
+
