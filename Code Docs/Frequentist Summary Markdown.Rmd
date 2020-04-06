@@ -1,0 +1,314 @@
+---
+title: "Impact of Lowering BAC on DUI Crashes"
+author: "Landon Mecham"
+date: "3/9/2020"
+output:
+  html_document:
+    toc: true
+    toc_depth: 4
+    theme: united
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+library(lubridate)
+library(dplyr)
+library(stats)
+library(tseries)
+library(urca)
+library(ggplot2)
+library(forecast)
+library(uroot)
+library(lmtest)
+#library(ggtheme)
+```
+
+```{r Plot up Data, include=FALSE}
+#Data Setup..
+#==============================================================
+setwd("C:/Users/Lando/Desktop/Econ 7801 Proj/")
+df = read.csv('weekly_dui_crashes.csv')
+df$wk = as.Date(df$wk)
+
+start_dt = as.Date('2015-01-04')
+stop_dt = as.Date('2019-04-01')
+wk_pre_ts = df %>% filter(wk < as.Date('2018-12-30') & wk >= start_dt) %>% dplyr::select(lcr) %>%
+  ts(freq=52, start=decimal_date(start_dt)) # '2015-01-04', '2014-01-05'
+
+wk_full_ts = df %>% filter(wk < stop_dt & wk >= start_dt) %>% dplyr::select(lcr) %>%
+  ts(freq=52, start=decimal_date(start_dt))
+
+wk_post_ts = df %>% filter(wk < stop_dt & wk >= start_dt) %>% dplyr::select(post) %>% 
+  as.matrix()
+```
+
+
+### Summary
+
+The purpose of my project is to estimate the impact of lowering the BAC in Utah from 0.08 to 0.05 on DUI related car crashes.
+
+My modelling approach is to:
+
+1. Determine the order of integration
+
+2. Use the ACF and PACF of pre-intervention data to determine plausible ARIMA models
+
+3. Run the models on the full dataset with a "treatment" binary indicating if the BAC is 0.05
+
+4. Choose best ARIMA on full dataset and evaulate the binary treatment variable for the estimated impact
+
+My dataset is weekly DUI related vehicle collisions in Utah from 2015-01-01 to 2019-03-31. The BAC was lowered from 0.08 to 0.05 on 2018-12-30.
+
+```{r Plot, echo= FALSE}
+## 2015-2019 Weekly DUI
+ggplot(data=df %>% filter(wk >= as.Date('2015-01-01') & wk <= as.Date('2019-04-01')),
+       aes(x=wk, y=lcr, group=1)) +
+  geom_line(color="blue") + #+ geom_point() +
+  ylab("log crashes") +
+  ggtitle("Weekly DUI Related Crashes in Utah") +
+  theme_bw()
+
+```
+
+
+
+### Unit Root Testing
+
+To test for the presence of a unit root I'll use the Hegy Test. The test allows you to include seasonal dummies, a constant, and deterministic trend in the regression. Based on the plot of the data I'll just include a constant.
+
+```{r Unit Root Testing}
+## Hegy Test for Seasonal Data
+#  deterministic = c(constant, trend, seasonal dummys)
+#  Under Ho: Seasonal Unit Root Exists
+ht = hegy.test(wk_pre_ts, deterministic = c(1,0,0), lag.method = "BIC")
+df.ht.1 = cbind(as.data.frame(ht$statistics),
+            as.data.frame(ht$pvalues))
+names(df.ht.1) = c('test statistic', 'p-value')
+df.ht.1
+```
+
+Since we fail to reject at several intervals I'll take 1 seasonal difference and run the Hegy test again.
+
+
+```{r Unit Root Testing with Seasonal Difference.}
+## Taks seasonal difference
+wk_pre_ts_ds1 = diff(wk_pre_ts, lag = 52, differences = 1)
+
+## Run Hegy Test
+ht2 = hegy.test(wk_pre_ts_ds1, lag.method = "AIC")
+df.ht.2 = cbind(as.data.frame(ht2$statistics),
+            as.data.frame(ht2$pvalues))
+names(df.ht.2) = c('test statistic', 'p-value')
+df.ht.2
+```
+
+We now reject at most intervals so I'll continue with a I(1) SARIMA.
+
+
+
+### ACF and PACF
+The first step is to find a few plausible models using the entire pre-intervention span. I know I'm building a I(1) Sarima model so that's all I'll be considering. First I'll view the ACF & PACFs of seasonally differenced data.
+```{r ACF and PACF}
+# ACF
+ac = acf(wk_pre_ts_ds1, plot = FALSE, lag.max = 206)
+plot(ac, main = "Seasonally Differenced ACF")
+
+# PACF
+pcf = pacf(wk_pre_ts_ds1, plot = FALSE, lag.max = 206)
+plot(pcf, main = "Seasonally Differenced PACF")
+```
+
+
+Lags 1-51 don't show any significance until around lag 20 which I'll attribute to randomness. Lag 52 is significant in both the ACF and PACF which indicates either SAR(1) or SMA(1) models. I'll include both of those in my list of plausible models. I'll also include a pure noise model with neither MA or AR components.
+
+
+
+### Run Models on Pre-Intervention data.
+
+I'll run my 3 models on the pre-intervention period and check for significance of coefficients, white noise residuals, and fit through AIC & BIC.
+```{r Fitting SARIMAS on Pre Dataset eval false, eval=FALSE} 
+## First, set up function to get Q Statistics at several points.
+#Q Statistic # Box-Ljung test
+## Ho: Independent Errors (white noise) -- WE want to fail to reject..
+get_q = function(model, start = 5, stop = 25, by = 5, fitdf){
+  x = c()
+  y = c()
+  i = 1
+  for (val in seq(start,stop,by)) {
+    new = Box.test(model$residuals, lag = val, type = "Ljung-Box", fitdf = fitdf)
+    y[[i]] = val
+    x[[i]] = new$p.value
+    i = i+1
+  }
+  df = do.call(rbind.data.frame, Map(cbind, y, x))
+  names(df) <- c('lag number', 'p-value')
+  return(df)
+}
+
+## Now, fit models and get diagnostics.
+
+# Sarima(1,1,0)
+mod1_pre = Arima(wk_pre_ts, order = c(0,0,0), seasonal = c(1,1,0))
+# Sarima(0,1,0)
+mod2_pre = Arima(wk_pre_ts, order = c(0,0,0), seasonal = c(0,1,1))
+# Sarima(1,0,1)
+mod4_pre = Arima(wk_pre_ts, order = c(0,0,0), seasonal = c(0,1,0))
+
+print("-------------------- SARIMA(0,0,0,1,1,0) --------------------")
+coeftest(mod1_pre) # Get estimates with P-Values
+paste0('AIC: ', round(mod1_pre$aic,2)) # Get AIC
+paste0('BIC: ', round(mod1_pre$bic,2)) # Get BIC
+get_q(mod1_pre, fitdf = 1) # Get Q-Stat on Residuals
+writeLines(" \n ")
+print("-------------------- SARIMA(0,0,0,0,1,1) --------------------")
+coeftest(mod2_pre)
+paste0('AIC: ', round(mod2_pre$aic,2))
+paste0('BIC: ', round(mod2_pre$bic,2))
+get_q(mod2_pre, fitdf = 1) 
+writeLines(" \n ")
+print("-------------------- SARIMA(0,0,0,0,1,0) --------------------")
+coeftest(mod4_pre)
+paste0('AIC: ', round(mod4_pre$aic,2))
+paste0('BIC: ', round(mod4_pre$bic,2))
+get_q(mod4_pre, fitdf = 2) 
+writeLines(" \n ")
+```
+
+```{r Fitting SARIMAS on Pre Dataset, echo=FALSE} 
+## First, set up function to get Q Statistics at several points.
+#Q Statistic # Box-Ljung test
+## Ho: Independent Errors (white noise) -- WE want to fail to reject..
+get_q = function(model, start = 5, stop = 25, by = 5, fitdf){
+  x = c()
+  y = c()
+  i = 1
+  for (val in seq(start,stop,by)) {
+    new = Box.test(model$residuals, lag = val, type = "Ljung-Box", fitdf = fitdf)
+    y[[i]] = val
+    x[[i]] = new$p.value
+    i = i+1
+  }
+  df = do.call(rbind.data.frame, Map(cbind, y, x))
+  names(df) <- c('lag number', 'Qstat p-value')
+  return(df)
+}
+
+## Now, fit models and get diagnostics.
+
+print("-------------------- SARIMA(0,0,0,1,1,0) --------------------")
+mod1_pre = Arima(wk_pre_ts, order = c(0,0,0), seasonal = c(1,1,0)) # Fit Model
+coeftest(mod1_pre) # Get Estimates with p-values
+paste0('AIC: ', round(mod1_pre$aic,2)) # Get AIC
+paste0('BIC: ', round(mod1_pre$bic,2)) # Get BIC
+get_q(mod1_pre, fitdf = 1) # Get Q-Stat at 5,10,15,20,25 lags
+
+# SARIMA(0,1,1)
+print("-------------------- SARIMA(0,0,0,0,1,1) --------------------")
+mod2_pre = Arima(wk_pre_ts, order = c(0,0,0), seasonal = c(0,1,1))
+coeftest(mod2_pre)
+paste0('AIC: ', round(mod2_pre$aic,2))
+paste0('BIC: ', round(mod2_pre$bic,2))
+get_q(mod2_pre, fitdf = 1) 
+
+print("-------------------- SARIMA(0,0,0,0,1,0) --------------------")
+mod4_pre = Arima(wk_pre_ts, order = c(0,0,0), seasonal = c(0,1,0))
+#coeftest(mod4_pre)
+paste0('AIC: ', round(mod4_pre$aic,2))
+paste0('BIC: ', round(mod4_pre$bic,2))
+get_q(mod4_pre, fitdf = 2) 
+```
+
+Both the SAR(1) and SMA(1) have white significant coefficients and all three models have white noise residuals. The SMA(1) coefficient is nearly 1 which is concerning. The SAR(1) outperforms the pure noise model in terms of AIC & BIC, but not the SMA(1). Now that I have 3 plausible models, I'll run them on the full dataset.
+
+
+
+### Run Models on Full Dataset
+
+My full dataset ranges from beginning of 2015 through Q1 of 2019. The BAC was lowered on 2018-12-30 giving a full quarter of post-intervention data. 
+
+I created a binary variable indicating if the week is during the intervention (i.e. after 2018-12-29) and named it wk_post_ts. 
+
+The "highest quality" model on the full dataset will be used to evaulate the significance and magnitude of the wk_post_ts variable.
+
+```{r Fitting SARIMAS on Full Dataset with eval false, eval=FALSE}
+## Fit models and get diagnostics.
+
+# Sarima(1,1,0)
+mod1_post = Arima(wk_full_ts, order = c(0,0,0), seasonal = c(1,1,0), xreg = wk_post_ts)
+# Sarima(0,1,0)
+mod2_post = Arima(wk_full_ts, order = c(0,0,0), seasonal = c(0,1,1), xreg = wk_post_ts)
+# Sarima(1,0,1)
+mod4_post = Arima(wk_full_ts, order = c(0,0,0), seasonal = c(0,1,0), xreg = wk_post_ts)
+
+print("-------------------- SARIMA(0,0,0,1,1,0) --------------------")
+coeftest(mod1_post)
+paste0('AIC: ', round(mod1_post$aic,2))
+paste0('BIC: ', round(mod1_post$bic,2))
+get_q(mod1_post, fitdf = 1) 
+
+print("-------------------- SARIMA(0,0,0,0,1,1) --------------------")
+coeftest(mod2_post)
+paste0('AIC: ', round(mod2_post$aic,2))
+paste0('BIC: ', round(mod2_post$bic,2))
+get_q(mod2_post, fitdf = 1) 
+
+print("-------------------- SARIMA(0,0,0,0,1,0) --------------------")
+coeftest(mod2_post)
+paste0('AIC: ', round(mod4_post$aic,2))
+paste0('BIC: ', round(mod4_post$bic,2))
+get_q(mod4_post, fitdf = 2) 
+
+```
+```{r Fitting SARIMAS on Full Dataset, echo=FALSE}
+## Fit models and get diagnostics.
+
+# Sarima(1,1,0)
+mod1_post = Arima(wk_full_ts, order = c(0,0,0), seasonal = c(1,1,0), xreg = wk_post_ts)
+# Sarima(0,1,0)
+mod2_post = Arima(wk_full_ts, order = c(0,0,0), seasonal = c(0,1,1), xreg = wk_post_ts)
+# Sarima(1,0,1)
+mod4_post = Arima(wk_full_ts, order = c(0,0,0), seasonal = c(0,1,0), xreg = wk_post_ts)
+
+print("-------------------- SARIMA(0,0,0,1,1,0) --------------------")
+coeftest(mod1_post)
+paste0('AIC: ', round(mod1_post$aic,2))
+paste0('BIC: ', round(mod1_post$bic,2))
+get_q(mod1_post, fitdf = 1) 
+
+print("-------------------- SARIMA(0,0,0,0,1,1) --------------------")
+coeftest(mod2_post)
+paste0('AIC: ', round(mod2_post$aic,2))
+paste0('BIC: ', round(mod2_post$bic,2))
+get_q(mod2_post, fitdf = 1) 
+
+print("-------------------- SARIMA(0,0,0,0,1,0) --------------------")
+coeftest(mod2_post)
+paste0('AIC: ', round(mod4_post$aic,2))
+paste0('BIC: ', round(mod4_post$bic,2))
+get_q(mod4_post, fitdf = 2) 
+
+```
+
+The SAR(1) & SMA(1) models both have white noise residuals, but the pure noise model does not. The SMA(1) coefficient is still close to 1 and isn't significant so this model can be ruled out.
+
+The SAR(1) model is the best performing model of the three so the intervention binary should be evaulated using this model.
+
+Since the intervention binary is insignificant then we can conclude there's no evidence that lowering the BAC had an impact on DUI related crashes in Utah in the first Quarter of 2019.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

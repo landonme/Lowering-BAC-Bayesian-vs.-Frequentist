@@ -1,0 +1,348 @@
+---
+title: "Impact of Lowering BAC on DUI Crashes"
+subtitle: 'A Bayesian Structural Time Series Approach'
+author: "Landon Mecham"
+date: "3/17/2020"
+output:
+  html_document:
+    toc: true
+    toc_depth: 4
+    theme: united
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+library(lubridate)
+library(dplyr)
+library(stats)
+library(tseries)
+library(urca)
+library(ggplot2)
+library(forecast)
+library(uroot)
+library(bsts)
+library(reshape2)
+library(knitr)
+library(CausalImpact)
+```
+
+```{r Plot up Data, include=FALSE}
+setwd("C:/Users/Lando/Desktop/Econ 7801 Proj/")
+df = read.csv('Datasets/weekly_dui_crashes.csv',  stringsAsFactors = FALSE)
+
+start_dt = as.Date('2015-01-04')
+stop_dt = as.Date('2019-03-31')
+wk_pre_ts = df %>% filter(wk < as.Date('2018-12-30') & wk >= start_dt) %>% dplyr::select(cr) %>%
+  ts(freq=52, start=decimal_date(start_dt)) # '2015-01-04', '2014-01-05'
+
+wk_full_ts = df %>% filter(wk < stop_dt & wk >= start_dt) %>% dplyr::select(cr) %>%
+  ts(freq=52, start=decimal_date(start_dt))
+
+wk_full_other = df %>% filter(wk < stop_dt & wk >= start_dt) %>% dplyr::select(cr_other) %>%
+  ts(freq=52, start=decimal_date(start_dt))
+
+wk_post_ts = df %>% filter(wk < stop_dt & wk >= start_dt) %>% dplyr::select(post) %>% 
+  as.matrix()
+
+wk_full_ts = log(wk_full_ts)
+wk_pre_ts = log(wk_pre_ts)
+wk_full_other = log(wk_full_other)
+```
+
+
+### Summary
+
+The purpose of my project is to estimate the impact of lowering the BAC in Utah from 0.08 to 0.05 on DUI related car crashes.
+
+I'll use two different modelling approaches using bayesian structural time series models via the BSTS R package. The first approach is my primary analysis, the second is a robustness check. Here's a summary of each approach:
+
+1. Develop several plausible BSTS models and determine the "best" by R-Squared, Harvey's GoF statistic, and a holdout RMSE & MAE. I'll include a treatment binary in the "best" model indicating whether or not the week of data is after the BAC was lowered (i.e. 2018-12-30). I evaluate the coefficient using the inclusion probability and credible intervals to determine whether the treatment had a significant effect.
+
+2. Using the "best" model from approach 1, I'll create a counterfactual prediction (with credible intervals) and compare them to what actually occured to see if the actuals are outside our bounds of expectation had there been no treatment. I'll do this using the CausalImpact package in R which was developed by the same authors of BSTS. This works best with a good control (similar to difference in differences) so I'll use non-DUI related collisions as a counterfactual control as done in other BAC related studies.
+
+
+My dataset is log of weekly DUI related collisions in Utah from 2015-01-01 to 2019-03-31 provided by the Utah Department of Transportation.
+```{r Plot, echo= FALSE}
+## 2015-2019 Weekly DUI
+ggplot(data=df %>% filter(wk >= as.Date('2015-01-01') & wk <= as.Date('2019-04-01')),
+       aes(x=as.Date(wk), y=lcr, group=1)) +
+  geom_line(color="blue") + #+ geom_point() +
+  ylab("log crashes") +
+  ggtitle("Log Weekly DUI Related Crashes in Utah") +
+     theme(axis.title.x=element_blank()) + theme_bw()
+```
+
+
+### Approach 1: BSTS Model with Treatment Binary
+
+This approach is the most similar to the ARIMA modelling I did. I'll find a model that fits the data well and I will include a treatment variable with that model to determine if lowering the BAC had a significant impact on DUI crashes.
+
+#### Find "best" Model
+To do this, I'll create several different BSTS models and compare them based on the following evaluation metrics:
+  1. R-Squared
+  2. Harvey's Goodness of Fit Metric
+  3. RMSE & MAE
+  4. RMSE & MAE (on a holdout)
+  
+The RMSE & MAE evaluated on a holdout are created by buidling the models on a shortened dataset ranging from 2015-01-01 to 2018-10-21, and computing the RMSE & MAE on the predictions vs. actuals on the remainder of the year (i.e. 2018-10-22 to 2018-12-29). The authors of bsts seem to put most of their emphasis on Mean Absolute Error (MAE) but I prefer RMSE since it penalizes larger errors.
+
+The Harvey's Goodness of Fit Metric is also included in the summary of all bsts models. This is analagous to the R-Squared for regression models but instead of comparing to the mean it compares to a random walk with drift which is arguably better for time series models.
+
+In deciding which model is best I'll put most weight on the RMSE of the holdout since this is the best representation of the model's true accuracy and prevents overfitting. This will be especially important the second approach where the predictions are used. Of course, I'll also keep in mind all other metrics mentioned above.
+
+I plan on going into more detail of what these are in my paper, but here are the combinations of models I'll be building and comparing:
+
+1. Local Linear Trend & Seasonality
+2. Seasonality only
+3. Local Linear Trend only
+4. Semi Local Linear Trend only
+5. Semi Local Linear Trend & Seasonality
+
+
+##### Build Models
+
+I'll build the models on both my full dataset with the treatment binary and a shortened dataset to evaulate the RMSE & MAE on a holdout.
+
+First, I'll build on the shortened data ranging from 2015-01-01 to 2018-10-21.
+```{r build bsts models, echo = T, results = 'hide'}
+### Get out of sample evaluation metrics..
+### ===============================================================
+
+## Cut dataset.
+y.1 = wk_full_ts[1:199] # Used to train models
+y.2 = wk_full_ts[200:209] # Used to compare models
+
+## LocalLinear and Seasonality
+ss <- AddLocalLinearTrend(list(), y.1)
+ss <- AddSeasonal(ss, y.1, nseasons = 52)
+model1_pre <- bsts(y.1,
+               state.specification = ss, niter = 500)
+
+## Seasonal Only
+ss2 <- AddSeasonal(list(), y.1, nseasons = 52)
+model2_pre <- bsts(y.1,
+               state.specification = ss2, niter = 500)
+
+## Trend Only
+ss3 <- AddLocalLinearTrend(list(), y.1)
+model3_pre <- bsts(y.1,
+               state.specification = ss3, niter = 500)
+
+## AddSemilocalLinearTrend
+ss4 <- AddSemilocalLinearTrend(list(), y.1)
+model4_pre <- bsts(y.1,
+               state.specification = ss4, niter = 500)
+
+## AddSemilocalLinearTrend
+ss5 <- AddSemilocalLinearTrend(list(), y.1)
+ss5 <- AddSeasonal(ss5, y.1, nseasons = 52)
+model5_pre <- bsts(y.1,
+               state.specification = ss5, niter = 500)
+```
+
+
+Now, I'll get the RMSE & MAE for predicted vs. actuals on data ranging from 2018-10-22 to 2018-12-29.
+```{r compare models}
+# Get MAE & RMSE on Holdout:
+get.error.metrics.oos = function(model){
+  preds = predict(model, horizon = 10)
+  errors = preds$mean - y.2
+  mae = mean(abs(errors))
+  rmse = sqrt(mean(errors^2))
+  return(as.data.frame(list("MAE_hld" = round(mae,4), "RMSE_hld"= round(rmse,4))))
+}
+
+m1.metrics_pre = get.error.metrics.oos(model1_pre)
+m2.metrics_pre = get.error.metrics.oos(model2_pre)
+m3.metrics_pre = get.error.metrics.oos(model3_pre)
+m4.metrics_pre = get.error.metrics.oos(model4_pre)
+m5.metrics_pre = get.error.metrics.oos(model5_pre)
+all.df = rbind(m1.metrics_pre, m2.metrics_pre, m3.metrics_pre, m4.metrics_pre, m5.metrics_pre)
+row.names(all.df) = c('Model1', 'Model2', 'Model3', 'Model4', 'Model5')
+kable(all.df)
+```
+Look at Posterior Predictive Plots
+```{r PPC On Holdout}
+y.2 = wk_full_ts[200:209] # Used to compare models
+pred <- predict(model, horizon = 12, burn = 1)
+
+
+
+
+
+```
+
+
+
+
+
+Now, I'll build the models again on the full dataset with the treatment binary to get the R-Squared and Harvey's GoF statistic.
+```{r build bsts models on full, echo = T, results = 'hide'}
+## LocalLinear and Seasonality
+ss <- AddLocalLinearTrend(list(), wk_full_ts)
+ss <- AddSeasonal(ss, wk_full_ts, nseasons = 52)
+model1 <- bsts(wk_full_ts ~ wk_post_ts,
+               state.specification = ss, niter = 500)
+
+## Seasonal Only
+ss2 <- AddSeasonal(list(), wk_full_ts, nseasons = 52)
+model2 <- bsts(wk_full_ts ~ wk_post_ts,
+               state.specification = ss2, niter = 500)
+
+## Trend Only
+ss3 <- AddLocalLinearTrend(list(), wk_full_ts)
+model3 <- bsts(wk_full_ts ~ wk_post_ts,
+               state.specification = ss3, niter = 500)
+
+## AddSemilocalLinearTrend
+ss4 <- AddSemilocalLinearTrend(list(), wk_full_ts)
+model4 <- bsts(wk_full_ts ~ wk_post_ts,
+               state.specification = ss4, niter = 500)
+
+## AddSemilocalLinearTrend
+ss5 <- AddSemilocalLinearTrend(list(), wk_full_ts)
+ss5 <- AddSeasonal(ss5, wk_full_ts, nseasons = 52)
+model5 <- bsts(wk_full_ts ~ wk_post_ts,
+               state.specification = ss5, niter = 500)
+```
+
+
+Now, I'll get the Harvey's Goodness of Fit & R-squared for each model as well as the RMSE & MAE for both the holdout and the whole dataset and compare.
+```{r compare models on full}
+# Get Rsq, HGOF, MAE & RMSE on full dataset.
+get.metrics = function(model){
+  errors = bsts.prediction.errors(model)$in.sample
+  mae = mean(abs(errors))
+  rmse = sqrt(mean(errors^2))
+  s = summary(model)
+  rsq = round(as.numeric(s[3]),4)
+  hgof = round(as.numeric(s[4]),4)
+  return(as.data.frame(list("Rsquared" = rsq,"HarveyGOF" = hgof, "MAE" = round(mae,4), "RMSE"= round(rmse,4))))
+}
+
+m1.metrics.2 = get.metrics(model1)
+m2.metrics.2 = get.metrics(model2)
+m3.metrics.2 = get.metrics(model3)
+m4.metrics.2 = get.metrics(model4)
+m5.metrics.2 = get.metrics(model5)
+all.df.2 = rbind(m1.metrics.2, m2.metrics.2, m3.metrics.2, m4.metrics.2, m5.metrics.2)
+row.names(all.df.2) = c('Model1', 'Model2', 'Model3', 'Model4', 'Model5')
+kable(cbind(all.df.2, all.df))
+```
+
+Now I can choose the "best" model by looking at all evaluation metrics. I'm going to put most weight on the RMSE_hld (i.e. RMSE of the holdout) because 1) RMSE penalizes errors more than MAE and 2) this is calculated on a holdout so it's a good representation of the actual accuracy of the model and prevents overfitting. I want to choose a model that minimizes the RMSE_hld while still performing relatively well on all other evaluation metrics.
+
+Model 5 appears to do this. It has the lowest RMSE_hld while maintaining a good RMSE & MAE on the full dataset and a relatively high R-Squared and Harvey's GOF. This model includes both SemilocalLinearTrend and Seasonal state components. 
+
+I can now move forward and evaluate the coefficient of the treatment variable on Model5.
+
+#### Evaluating Treatment Coefficient
+
+```{r treatment evaluation}
+kable(summary(model5)[6], digits = 4)
+```
+
+To determine whether the treatment binary has any true effect I'll look at the inc.prob. This is the posterior probability of the treatment variable actually being included in the true underlying model. We see this is 1.4% (very low). Additionally, the mean posterior effect is effectively 0 with a standard deviation of 0.0093 meaning that the credible interval overlaps 0. We can conclude that there's not sufficient evidence to say that the BAC had any impact on DUI related collisions.
+
+### Approach 2: Robustness Check
+
+The method suggested by the authors of the bsts R package is to create a good bayesian structual time series model leading up to the treatment, then use that to get predictions during the treatment. These predictions (along with credible intervals) become a counterfactual for what would have happened had there been no treatment. We can then compare the actuals to the counterfactuals to evaluate whether the treatment had any meaningful effect. More on this methodology can be found here: https://research.google/pubs/pub41854/
+
+As suggested by the BSTS authors, this methodology is much more powerful when a control (or set of controls) can be included in the regression component of the bsts model. Other researchers studying the impact of lowering the BAC on DUIs have used non-DUI related collisions in the same region as a control to DUI related crashes. To do this, we need to assume that that the treatment (i.e. lowering the BAC) has no no effect on the control (i.e. non-DUI related collisions). While this is difficult to prove, it's a reasonable assumption and one that other researches have made.
+
+First, I'll build my bsts model using Model5 from step 1, but including non-DUI related collisions in the regression portion. As requrired by the CasaulImpact function I'll set all data after 2018-12-30 to NA in the bsts model.
+```{r bsts causal impact, echo = T, results = 'hide'}
+# First, prepare dataset
+pre.period <- c(1, 209)
+post.period <- c(210, length(wk_full_ts))
+y = wk_full_ts
+y[post.period[1] : post.period[2]] <- NA
+y.post = wk_full_ts[post.period[1] : post.period[2]]
+
+# Build model
+ss <- AddSemilocalLinearTrend(list(), y)
+ss <- AddSeasonal(ss5, y, nseasons = 52)
+model <- bsts(formula = y ~  wk_full_other, state.specification = ss, niter = 500)
+```
+
+```{r causal impact}
+# Feed bsts model to CausalImpact
+impact <- CausalImpact(bsts.model = model,
+                       post.period.response = y.post)
+
+# Get summary
+summary(impact)
+````
+
+##### Results
+
+After lowering the BAC, the post-treatment mean DUI related collisions was 3.65 According the bsts model we would have expected a mean of 3.65 with a 95% credible interval of [3.35, 3.96] in the post-treatment period had we not lowered the BAC. This mean and credible interval serves as our counterfactual. If we subtract the counterfactual from the actual mean of DUI related collisions post-treatment we get mean effect size of -0.001 with a 95% interval of [-0.31, 0.30].
+
+This effect was not statistically significant and we cannot conclude that lowering the BAC had any effect on DUI related collisions.
+
+
+
+### Conclusion
+
+Both approaches yield the same conclusion of no significant impact of lowering the BAC on DUI related collisions.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
