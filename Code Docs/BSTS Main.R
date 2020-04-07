@@ -57,8 +57,8 @@ ggplot(data=df %>% filter(wk >= as.Date('2015-01-01') & wk <= as.Date('2019-04-0
 ### ========================================
 
 ## Cut dataset.
-y.1 = wk_full_ts[1:199] # Used to train models
-y.2 = wk_full_ts[200:209] # Used to compare models
+y.1 = wk_full_ts[1:190] # Used to train models
+y.2 = wk_full_ts[191:209] # Used to compare models
 
 ## LocalLinear and Seasonality
 ss <- AddLocalLinearTrend(list(), y.1)
@@ -87,6 +87,19 @@ ss5 <- AddSeasonal(ss5, y.1, nseasons = 52)
 model5_pre <- bsts(y.1,
                    state.specification = ss5, niter = 500)
 
+## AddSemilocalLinearTrend & Seasonality & AR
+ss6 <- AddSemilocalLinearTrend(list(), y.1)
+ss6 <- AddSeasonal(ss6, y.1, nseasons = 52)
+ss6 <- AddAr(ss6, y.1, lags = 6)
+model6_pre <- bsts(y.1,
+                   state.specification = ss6, niter = 500)
+
+## AddSemilocalLinearTrend & Seasonality & AR
+ss7 <- AddSemilocalLinearTrend(list(), y.1)
+ss7 <- AddAr(ss7, y.1, lags = 6)
+model7_pre <- bsts(y.1,
+                   state.specification = ss7, niter = 500)
+
 
 
 
@@ -104,11 +117,11 @@ m2.metrics_pre = get.error.metrics.oos(model2_pre)
 m3.metrics_pre = get.error.metrics.oos(model3_pre)
 m4.metrics_pre = get.error.metrics.oos(model4_pre)
 m5.metrics_pre = get.error.metrics.oos(model5_pre)
-all.df = rbind(m1.metrics_pre, m2.metrics_pre, m3.metrics_pre, m4.metrics_pre, m5.metrics_pre)
-row.names(all.df) = c('Model1', 'Model2', 'Model3', 'Model4', 'Model5')
+m6.metrics_pre = get.error.metrics.oos(model6_pre)
+m7.metrics_pre = get.error.metrics.oos(model7_pre)
+all.df = rbind(m1.metrics_pre, m2.metrics_pre, m3.metrics_pre, m4.metrics_pre, m5.metrics_pre, m6.metrics_pre, m7.metrics_pre)
+row.names(all.df) = c('Model1', 'Model2', 'Model3', 'Model4', 'Model5', "Model6", "Model7")
 kable(all.df)
-
-
 
 
 
@@ -167,10 +180,14 @@ cbind(all.df.2, all.df)
 
 
 # Evaluate Coefficient
-kable(summary(model5)[6], digits = 4)
+sum = summary(model5)[6]
+kable(sum, digits = 4)
 
-
-
+# Get 95% Credible Interval
+lower = sum$coefficients[1,3] + qt(.025, 250)*sum$coefficients[1,4]
+upper = sum$coefficients[1,3] - qt(.025, 250)*sum$coefficients[1,4]
+# 95% HPD Interval
+c(lower, sum$coefficients[1,3], upper)
 
 
 

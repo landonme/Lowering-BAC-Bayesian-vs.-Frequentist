@@ -111,9 +111,91 @@ get_pp = function(model, series){
 ppd5 = get_pp(model5, wk_full_ts)
 ppc_dens_overlay(y, ppd5)
 
+ppc_boxplot(y, ppd5[300:308,])
+ppc_dens(y, ppd5[40:42,])
+ppc_freqpoly(y, ppd5[40:42,])
+
+ppc_error_scatter_avg(y, ppd5)
+ppc_error_scatter_avg_vs_x(y, ppd5, x = seq(1:length(y)))
+
+ppc_stat(y, ppd5, stat = "mean")
+
+ppc_intervals(y, ppd5)
+ppc_ribbon(y, ppd5)
+
+
 # Model 4
 ppd4 = get_pp(model4, wk_full_ts)
 ppc_dens_overlay(y, ppd4)
+
+
+
+
+
+
+
+
+
+
+
+
+### Bayesian RMSE
+
+n <- 50
+m <- 100 
+y <- sample(n)
+
+# simulate errors 
+errors <- matrix(rnorm(n*m,0,1), nrow=m, ncol=n)
+
+# 100 predictions (rows) for each y (cols)
+predictions <- t(y + t(errors))
+
+# rmse function
+rmse <- function(y,yhat){sqrt(mean((yhat-y)^2))}
+
+# calculate posterior of rmse values
+rmse_dist <- apply(predictions,1,rmse,y=y)
+
+# summarize distribution
+summary(rmse_dist)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
