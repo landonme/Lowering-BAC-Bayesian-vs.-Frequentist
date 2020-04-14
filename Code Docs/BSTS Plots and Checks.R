@@ -6,7 +6,6 @@
 
 ## Posterior Predictive Checks
 
-
 library(bayesplot)
 library(dplyr)
 
@@ -62,13 +61,13 @@ par(mfrow=c(1,2))
 # One Option for Zooming In
 
 plot(pred4, plot.original = 5, ylab = "Log DUI collisions", xlab = "week #")
-title("Figure 4.1: Model 4", font.main= 1)
+#title("Figure 4.1: Model 4", font.main= 1)
 lines(y, col = "firebrick2")
 
 # 5 Predictions
 # One Option for Zooming In
 plot(pred5, plot.original = 5, ylab = NA, xlab = "week #")
-title("Figure 4.2: Model 5", font.main= 1)
+#title("Figure 4.2: Model 5", font.main= 1)
 lines(y, col = "firebrick2")
 
 #title("Figure 4", outer = TRUE, font.main = 2)
@@ -123,8 +122,20 @@ title("Figure 5.4: Model 5")
 
 
 
+## Residual Plots For Slides
+## ==============================================
+par(mfrow = c(1,2))
 
-mtext(side=3, line=3, at=-0.07, adj=0, cex=1, mytitle)
+#par(mfrow = c(1,2))
+qqdist(r4)   ## A bit of departure in the upper tail
+qqdist(r5)   ## A bit of departure in the upper tail
+
+
+AcfDist(r4, ylim = c(-0.3, 0.3))
+AcfDist(r5, ylim = c(-0.3, 0.3))  
+
+
+
 
 
 
@@ -215,9 +226,12 @@ ggplot(rdc,aes(x=rmse)) +
   geom_histogram(data=subset(rdc,Model == "Model 4"),aes(fill = Model), alpha = 0.5) +
   geom_histogram(data=subset(rdc,Model == "Model 5"),aes(fill = Model), alpha = 0.5) +
   scale_fill_discrete("") +
-  ggtitle("Figure 6: One-Step-Ahead RMSE") +
+  #ggtitle("Figure 6: One-Step-Ahead RMSE") +
   theme_classic() +
   theme(plot.title = element_text(hjust = 0.5))
+
+
+
 
   
 ggplot(rdc,aes(x=mae)) + 
@@ -226,25 +240,6 @@ ggplot(rdc,aes(x=mae)) +
   scale_fill_discrete("") +
   theme_classic() +
   theme(plot.title = element_text(hjust = 0.5))
-
-
-
-
-
-
-
-
-dat <- data.frame(xx = c(runif(100,20,50),runif(100,40,80),runif(100,0,30)),yy = rep(letters[1:3],each = 100))
-
-ggplot(dat,aes(x=xx)) + 
-  geom_histogram(data=subset(dat,yy == 'a'),fill = "red", alpha = 0.2) +
-  geom_histogram(data=subset(dat,yy == 'b'),fill = "blue", alpha = 0.2) +
-  geom_histogram(data=subset(dat,yy == 'c'),fill = "green", alpha = 0.2)
-
-
-
-
-
 
 
 
