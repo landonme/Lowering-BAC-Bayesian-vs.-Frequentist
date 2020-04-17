@@ -59,15 +59,16 @@ wk_post_ts = df %>% filter(wk < stop_dt & wk >= start_dt) %>% dplyr::select(post
 
 
 
-## Plot
+## Plot dataset
 #==============================================================
-
+df$wk = as.Date(df$wk)
 ## 2015-2019 Weekly DUI
-ggplot(data=df, aes(x=wk, y=cr, group=1)) +
-  geom_line(color="firebrick") + #+ geom_point() +
+ggplot(data=df %>% filter(wk <= as.Date('2019-03-31') & wk >= as.Date('2015-01-01'))
+       , aes(x=wk, y=lcr, group=1)) +
+  geom_line(color="Blue", alpha = 1) + #+ geom_point() +
   xlab("week") + ylab("log crashes") +
-  ggtitle("Log of DUI Related Crashes in Utah") +
-  theme_bw()
+  #ggtitle("Log of DUI Related Crashes in Utah") +
+  theme_classic()
 
 
 

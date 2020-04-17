@@ -14,10 +14,6 @@ library(reshape2)
 library(knitr)
 library(CausalImpact)
 
-
-
-
-
 setwd("C:/Users/Lando/Desktop/Econ 7801 Proj/")
 df = read.csv('Datasets/weekly_dui_crashes.csv',  stringsAsFactors = FALSE)
 
@@ -105,7 +101,7 @@ model7_pre <- bsts(y.1,
 
 # Get MAE & RMSE on Holdout:
 get.error.metrics.oos = function(model){
-  preds = predict(model, horizon = 10)
+  preds = predict(model, horizon = length(y.2))
   errors = preds$mean - y.2
   mae = mean(abs(errors))
   rmse = sqrt(mean(errors^2))
@@ -156,6 +152,13 @@ ss5 <- AddSeasonal(ss5, wk_full_ts, nseasons = 52)
 model5 <- bsts(wk_full_ts ~ wk_post_ts,
                state.specification = ss5, niter = 500)
 
+## AddSemilocalLinearTrend
+ss5 <- AddSemilocalLinearTrend(list(), wk_full_ts)
+ss5 <- AddSeasonal(ss5, wk_full_ts, nseasons = 52)
+model5 <- bsts(wk_full_ts ~ wk_post_ts,
+               state.specification = ss5, niter = 500)
+
+
 
 # Get Rsq, HGOF, MAE & RMSE on full dataset.
 get.metrics = function(model){
@@ -173,14 +176,68 @@ m2.metrics.2 = get.metrics(model2)
 m3.metrics.2 = get.metrics(model3)
 m4.metrics.2 = get.metrics(model4)
 m5.metrics.2 = get.metrics(model5)
-all.df.2 = rbind(m1.metrics.2, m2.metrics.2, m3.metrics.2, m4.metrics.2, m5.metrics.2)
-row.names(all.df.2) = c('Model1', 'Model2', 'Model3', 'Model4', 'Model5')
+m6.metrics.2 = get.metrics(model6)
+all.df.2 = rbind(m1.metrics.2, m2.metrics.2, m3.metrics.2, m4.metrics.2, m5.metrics.2, m6.metrics.2)
+row.names(all.df.2) = c('Model1', 'Model2', 'Model3', 'Model4', 'Model5', 'Model6')
 cbind(all.df.2, all.df)
 
 
+## Posterior Predictive Checks on Model 4 & 5
 
-# Evaluate Coefficient
+library(bayesplot)
+library(dplyr)
+
+## Some In-Package Plots
+par(mfrow=c(2,2))
+
+# 4 Whole
+plot(pred4)
+title("Figure 4.1")
+lines(as.numeric(c(y.1,y.2), lty = 2, lwd = 2), col = "firebrick2")
+
+# 4 Predictions
+# One Option for Zooming In
+plot(pred4, plot.original = 2)
+title("Figure 4.2")
+lines(y, col = "firebrick2")
+
+# 5 Whole
+plot(pred5, ylim = c(2.5, 4.5)) # 
+title("Figure 4.3")
+lines(as.numeric(c(y.1,y.2)), col = "firebrick2")
+
+# 5 Predictions
+# One Option for Zooming In
+plot(pred5, plot.original = 2)
+title("Figure 4.2")
+lines(y, col = "firebrick2")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Evaluate Coefficient (Model 5)
 sum = summary(model5)[6]
+kable(sum, digits = 4)
+
+# Get 95% Credible Interval
+lower = sum$coefficients[1,3] + qt(.025, 250)*sum$coefficients[1,4]
+upper = sum$coefficients[1,3] - qt(.025, 250)*sum$coefficients[1,4]
+# 95% HPD Interval
+c(lower, sum$coefficients[1,3], upper)
+
+# Evaluate Coefficient (Model 4)
+sum = summary(model4)[6]
 kable(sum, digits = 4)
 
 # Get 95% Credible Interval
@@ -191,7 +248,8 @@ c(lower, sum$coefficients[1,3], upper)
 
 
 
-## Approach 2
+
+## Approach 2 -- CausalImpact Package
 ## ===============================================================================
 # First, prepare dataset
 pre.period <- c(1, 209)
@@ -213,8 +271,11 @@ impact <- CausalImpact(bsts.model = model,
 summary(impact)
 
 
-
-
+plot(impact, "original") +
+  coord_cartesian(xlim=c(200, 222)) + labs() +
+  ggtitle("Figure 7: CausalImpact Analysis") +
+  theme_classic()
+  
 
 
 

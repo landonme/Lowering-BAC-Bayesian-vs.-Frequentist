@@ -1,18 +1,7 @@
 
 
-
-
-
-
-## Posterior Predictive Checks
-
 library(bayesplot)
 library(dplyr)
-
-
-# ## Cut dataset.
-# y.1 = wk_full_ts[1:150] # Used to train models
-# y.2 = wk_full_ts[151:209] # Used to compare models
 
 
 
@@ -204,22 +193,15 @@ ppc_ribbon(y, ppd5)
 # calculate posterior of rmse values
 
 rmse <- function(y,yhat){sqrt(mean((yhat-y)^2))}
-mae <- function(y,yhat){mean(abs(yhat-y))}
 rmse_dist_5 =  apply(ppd5,1,rmse,y=y)
-mae.5 =  apply(ppd5,1,mae,y=y)
 rmse_dist_4 =  apply(ppd4,1,rmse,y=y)
-mae.4 =  apply(ppd4,1,mae,y=y)
-
-
 
 rd4 = data.frame(rmse_dist_4)
 names(rd4) = c("rmse")
 rd4$Model = "Model 4"
-rd4$mae = mae.4
 rd5 = data.frame(rmse_dist_5)
 names(rd5) = c("rmse")
 rd5$Model = "Model 5"
-rd5$mae = mae.5
 rdc = rbind(rd4, rd5)
 
 ggplot(rdc,aes(x=rmse)) + 
@@ -233,19 +215,30 @@ ggplot(rdc,aes(x=rmse)) +
 
 
 
-  
-ggplot(rdc,aes(x=mae)) + 
-  geom_histogram(data=subset(rdc,Model == "Model 4"),aes(fill = Model), alpha = 0.5) +
-  geom_histogram(data=subset(rdc,Model == "Model 5"),aes(fill = Model), alpha = 0.5) +
+## Now, on holdout Draws
+pred5_all = predict(model5_pre, horizon = length(y.2))
+pred5_dist = pred5_all$distribution
+pred5_rmse = apply(pred5_dist,1,rmse,y=y.2)
+
+pred4_all = predict(model4_pre, horizon = length(y.2))
+pred4_dist = pred4_all$distribution
+pred4_rmse = apply(pred4_dist,1,rmse,y=y.2)
+
+rd4h = data.frame(pred4_rmse)
+names(rd4h) = c("rmse")
+rd4h$Model = "Model 4"
+rd5h = data.frame(pred5_rmse)
+names(rd5h) = c("rmse")
+rd5h$Model = "Model 5"
+rdch = rbind(rd4h, rd5h)
+
+ggplot(rdch,aes(x=rmse)) + 
+  geom_histogram(data=subset(rdch,Model == "Model 4"),aes(fill = Model), alpha = 0.5) +
+  geom_histogram(data=subset(rdch,Model == "Model 5"),aes(fill = Model), alpha = 0.5) +
   scale_fill_discrete("") +
+  #ggtitle("Figure 6: One-Step-Ahead RMSE") +
   theme_classic() +
   theme(plot.title = element_text(hjust = 0.5))
-
-
-
-
-
-
 
 
 
